@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# operator-specific notes (paths, hostnames, machine names) never go public
+LOCAL-NOTES.md
