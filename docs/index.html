@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="claude-relink recovers Claude Code conversations orphaned by a moved project directory: mechanism, commands, candidate scoring, options and guard rails.">
+<title>claude-relink Field Manual</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap">
+<style>
+  /* Layout: VibeForge Systems field manual — navy field, gold spent once per view, silver hairlines,
+     Inter display in caps with wide tracking, Fira Code for everything the operator types.
+     Single theme by brand construction (the design system has no light theme). */
+  :root {
+    color-scheme: dark;
+    --vf-navy: #0A1A2F; --vf-navy-950: #05101F; --vf-navy-800: #102338; --vf-navy-700: #1A2F48; --vf-navy-600: #263E5A; --vf-navy-500: #38506E;
+    --vf-gold: #D4AF37; --vf-gold-200: #F1DF9A; --vf-gold-400: #E2C661; --vf-gold-600: #B8942A;
+    --vf-silver: #C0C0C0; --vf-ink: #E8EDF7; --vf-slate: #8090A5;
+    --vf-fg-1: var(--vf-ink); --vf-fg-2: #B8C3D6; --vf-fg-3: var(--vf-slate); --vf-fg-inverse: var(--vf-navy);
+    --vf-bg-field: var(--vf-navy); --vf-bg-deep: var(--vf-navy-950); --vf-bg-surface: var(--vf-navy-800); --vf-bg-raised: var(--vf-navy-700);
+    --vf-border-quiet: rgba(192,192,192,0.12); --vf-border-default: rgba(192,192,192,0.22); --vf-border-strong: rgba(212,175,55,0.45);
+    --vf-status-ok: #4FB286; --vf-status-warn: #E3A84B; --vf-status-error: #D86F5A; --vf-status-info: #5D8FC0;
+    --font-display: "Inter", "Inter Tight", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-body: "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "Fira Code", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --ease: cubic-bezier(0.2, 0.7, 0.25, 1); --dur: 220ms;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: 88px; }
+  body {
+    margin: 0; background: var(--vf-bg-field); color: var(--vf-fg-1);
+    font-family: var(--font-body); font-size: 16px; line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 0 96px;
+  }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--vf-bg-field); }
+  a { color: var(--vf-gold); text-decoration: none; }
+  a:hover { color: var(--vf-gold-400); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--vf-border-strong); outline-offset: 2px; }
+  p { margin: 0; max-width: 66ch; color: var(--vf-fg-2); text-wrap: pretty; }
+  p strong { color: var(--vf-fg-1); font-weight: 600; }
+  h1, h2, h3 { margin: 0; font-family: var(--font-display); color: var(--vf-fg-1); text-wrap: balance; }
+  h1 { font-size: clamp(40px, 6vw, 64px); font-weight: 700; line-height: 1.05; letter-spacing: 0.06em; text-transform: uppercase; }
+  h2 { font-size: clamp(26px, 3vw, 34px); font-weight: 700; line-height: 1.2; letter-spacing: 0.04em; text-transform: uppercase; }
+  h3 { font-size: 20px; font-weight: 600; line-height: 1.3; }
+  .eyebrow { font-family: var(--font-body); font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--vf-gold); }
+  .label { font-family: var(--font-body); font-size: 12px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--vf-fg-3); }
+  code, .mono { font-family: var(--font-mono); font-feature-settings: "ss01", "cv01"; }
+  p code, li code, td code, h3 code { font-size: 0.9em; color: var(--vf-gold-200); background: var(--vf-bg-deep); padding: 1px 6px; border-radius: 2px; border: 1px solid var(--vf-border-quiet); }
+
+  .page { max-width: 1200px; margin: 0 auto; }
+
+  /* nav: the brand's single permitted blur */
+  .nav {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 9;
+    display: flex; align-items: center; gap: 28px; flex-wrap: wrap;
+    padding: 14px 0; margin-inline: calc(-1 * max(16px, env(safe-area-inset-left, 0px))) calc(-1 * max(16px, env(safe-area-inset-right, 0px)));
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    background: rgba(10, 26, 47, 0.88); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--vf-border-quiet);
+  }
+  .nav .inner { max-width: 1200px; margin: 0 auto; width: 100%; display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand img { width: 44px; height: auto; display: block; }
+  .wordmark { font-family: var(--font-display); font-size: 14px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--vf-fg-1); white-space: nowrap; }
+  .wordmark span { color: var(--vf-fg-3); font-weight: 500; }
+  .links { display: flex; gap: 22px; flex-wrap: wrap; font-size: 12px; font-weight: 500; letter-spacing: 0.06em; }
+  .links a { color: var(--vf-fg-2); padding-bottom: 2px; border-bottom: 1px solid transparent; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+  .links a:hover { color: var(--vf-fg-1); }
+  .links a[aria-current="true"] { color: var(--vf-gold); border-bottom-color: var(--vf-gold); }
+  .spacer { flex: 1; }
+  .repo { font-family: var(--font-mono); font-size: 12px; color: var(--vf-fg-2); border: 1px solid rgba(192,192,192,0.35); padding: 8px 14px; border-radius: 2px; transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .repo:hover { border-color: var(--vf-border-strong); color: var(--vf-gold); }
+
+  /* hero */
+  .hero { padding-block: 96px 64px; border-bottom: 1px solid var(--vf-border-quiet); display: grid; gap: 24px; }
+  .hero .lead { font-size: 18px; line-height: 1.7; max-width: 60ch; }
+  .facts { display: flex; flex-wrap: wrap; gap: 10px 0; font-family: var(--font-mono); font-size: 12px; color: var(--vf-fg-3); }
+  .facts span { padding-right: 18px; margin-right: 18px; border-right: 1px solid var(--vf-border-default); line-height: 1.2; }
+  .facts span:last-child { border-right: 0; }
+
+  main { display: grid; gap: 96px; padding-top: 64px; min-width: 0; }
+  section { display: grid; gap: 20px; min-width: 0; }
+  .ord { font-family: var(--font-mono); font-size: 13px; color: var(--vf-gold); letter-spacing: 0.08em; }
+  .sechead { display: grid; gap: 8px; }
+
+  /* filing diagram */
+  .filing { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .drawer { background: var(--vf-bg-surface); border: 1px solid var(--vf-border-quiet); border-radius: 4px; padding: 18px; display: grid; gap: 8px; min-width: 0; }
+  .drawer .path { font-family: var(--font-mono); font-size: 13px; color: var(--vf-fg-1); word-break: break-all; }
+  .drawer .slug { font-family: var(--font-mono); font-size: 13px; color: var(--vf-gold-200); word-break: break-all; }
+  .drawer .state { font-size: 14px; color: var(--vf-fg-3); line-height: 1.5; }
+  .drawer .rule { font-family: var(--font-mono); font-size: 12px; color: var(--vf-fg-3); }
+  .drawer.gone { border-style: dashed; border-color: var(--vf-border-default); }
+  .drawer.gone .path { text-decoration: line-through; text-decoration-color: var(--vf-status-error); text-decoration-thickness: 1px; }
+  .drawer.live { box-shadow: 0 0 0 1px rgba(212,175,55,0.35), 0 8px 32px rgba(212,175,55,0.12); border-color: transparent; }
+
+  /* tables */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--vf-border-quiet); border-radius: 4px; background: var(--vf-bg-surface); min-width: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.55; }
+  th, td { text-align: left; vertical-align: top; padding: 12px 14px; border-bottom: 1px solid var(--vf-border-quiet); color: var(--vf-fg-2); }
+  th { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--vf-fg-3); background: var(--vf-bg-deep); }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { color: var(--vf-fg-1); }
+  .yes { color: var(--vf-status-ok); font-weight: 600; }
+  .no { color: var(--vf-fg-3); }
+
+  /* command and output blocks */
+  .cmd, .out { position: relative; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; white-space: pre; overflow-x: auto; min-width: 0; border-radius: 4px; }
+  .cmd { background: var(--vf-bg-deep); border: 1px solid var(--vf-border-quiet); padding: 16px 112px 16px 18px; color: var(--vf-fg-1); }
+  .cmd .k { color: var(--vf-gold-400); font-weight: 500; }
+  .cmd .a { color: var(--vf-gold-200); }
+  .cmd .c { color: var(--vf-fg-3); }
+  .copy { position: absolute; top: 10px; right: 10px; font-family: var(--font-body); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+          background: var(--vf-bg-surface); color: var(--vf-fg-2); border: 1px solid rgba(192,192,192,0.18); border-radius: 2px; padding: 8px 14px; cursor: pointer;
+          transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .copy:hover { border-color: var(--vf-border-default); color: var(--vf-fg-1); }
+  .copy[data-done="1"] { color: var(--vf-gold); border-color: var(--vf-border-strong); }
+  .out { background: var(--vf-bg-surface); border: 1px solid var(--vf-border-quiet); padding: 16px 18px; color: var(--vf-fg-2); }
+  .out .dim { color: var(--vf-fg-3); }
+  .out .hi { color: var(--vf-gold-200); background: rgba(212,175,55,0.10); box-shadow: inset 2px 0 0 var(--vf-gold); padding-left: 6px; margin-left: -8px; }
+
+  .steps { display: grid; gap: 48px; }
+  .step { display: grid; gap: 12px; min-width: 0; }
+  .step .head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; padding-top: 16px; border-top: 1px solid var(--vf-border-quiet); }
+
+  /* scoring */
+  .signals { display: grid; gap: 14px; background: var(--vf-bg-surface); border: 1px solid var(--vf-border-quiet); border-radius: 4px; padding: 20px; }
+  .sig { display: grid; grid-template-columns: minmax(160px, 260px) 1fr auto; gap: 16px; align-items: center; font-size: 14px; color: var(--vf-fg-2); }
+  .sig .bar { height: 8px; background: var(--vf-bg-deep); border: 1px solid var(--vf-border-quiet); position: relative; border-radius: 2px; overflow: hidden; }
+  .sig .bar i { position: absolute; inset: 0 auto 0 0; background: var(--vf-silver); opacity: 0.75; }
+  .sig .w { font-family: var(--font-mono); font-size: 12px; color: var(--vf-fg-1); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; border: 1px solid transparent; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; white-space: nowrap; }
+  .pill i { width: 6px; height: 6px; border-radius: 999px; display: inline-block; }
+  .pill.ok { background: rgba(79,178,134,0.12); color: #7fd4a8; border-color: rgba(79,178,134,0.35); } .pill.ok i { background: var(--vf-status-ok); }
+  .pill.warn { background: rgba(227,168,75,0.12); color: var(--vf-status-warn); border-color: rgba(227,168,75,0.35); } .pill.warn i { background: var(--vf-status-warn); }
+  .pill.info { background: rgba(93,143,192,0.12); color: #8fb3d8; border-color: rgba(93,143,192,0.35); } .pill.info i { background: var(--vf-status-info); }
+
+  /* callouts and cards */
+  .callout { border: 1px solid rgba(227,168,75,0.35); background: rgba(227,168,75,0.08); border-radius: 4px; padding: 16px 20px; max-width: 76ch; }
+  .callout .label { color: var(--vf-status-warn); display: block; margin-bottom: 6px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .card { background: var(--vf-bg-surface); border: 1px solid var(--vf-border-quiet); border-radius: 4px; padding: 20px 22px; display: grid; gap: 10px; min-width: 0; align-content: start; }
+  ul.tight { margin: 0; padding-left: 18px; display: grid; gap: 8px; color: var(--vf-fg-2); font-size: 15px; line-height: 1.6; }
+  ul.tight li::marker { color: var(--vf-fg-3); }
+
+  footer { margin-top: 96px; padding-top: 24px; border-top: 1px solid var(--vf-border-quiet); display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 12px; color: var(--vf-fg-3); letter-spacing: 0.04em; }
+  footer .wordmark { font-size: 12px; }
+
+  @media (max-width: 760px) {
+    .hero { padding-block: 56px 40px; }
+    main { gap: 64px; padding-top: 40px; }
+    .sig { grid-template-columns: 1fr; gap: 6px; }
+    .cmd { padding-right: 18px; padding-top: 44px; }
+    .links { gap: 14px; }
+    .nav { position: static; }          /* a 200px sticky bar would own a phone screen */
+    .nav .repo { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="nav">
+  <div class="inner">
+    <div class="brand">
+      <img src="assets/crest.png" alt="" width="44" height="28">
+      <div class="wordmark">VibeForge <span>Systems</span></div>
+    </div>
+    <nav class="links" aria-label="Sections">
+      <a href="#mechanism">Mechanism</a>
+      <a href="#scope">Scope</a>
+      <a href="#commands">Commands</a>
+      <a href="#scoring">Scoring</a>
+      <a href="#options">Options</a>
+      <a href="#guards">Guard rails</a>
+    </nav>
+    <div class="spacer"></div>
+    <a class="repo" href="https://github.com/VibeForge-Systems/claude-relink">github.com/VibeForge-Systems/claude-relink</a>
+  </div>
+</div>
+
+<div class="page">
+  <header class="hero">
+    <div class="eyebrow">Claude Code session recovery · v1.0.0 · Apache-2.0</div>
+    <h1>claude-relink</h1>
+    <p class="lead">Recovers Claude Code conversations orphaned by a moved project directory. Transcripts, subagent transcripts, project memory, settings and prompt history are moved or merged to the directory's new home, with every absolute path inside rewritten.</p>
+    <div class="facts">
+      <span>single file</span><span>Python 3.8+</span><span>standard library only</span><span>dry run by default</span><span>backup and undo on every apply</span><span>reads Windows-origin stores</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="mechanism">
+      <div class="sechead">
+        <div class="eyebrow">Mechanism</div>
+        <h2>Why sessions vanish when a directory moves</h2>
+      </div>
+      <p>Claude Code files every project under a slug derived from its absolute path: each character that is not a letter or digit becomes a hyphen. The slug is the only link between a directory and its sessions. Move the directory and <code>claude --resume</code> looks under a slug that holds nothing. The transcripts are intact. They are filed under a path that no longer exists.</p>
+      <div class="filing">
+        <div class="drawer gone">
+          <div class="label">Previous location</div>
+          <div class="path">/home/dev/src/personal/ledger-api</div>
+          <div class="rule">re.sub(r'[^a-zA-Z0-9]', '-', cwd)</div>
+          <div class="slug">~/.claude/projects/-home-dev-src-personal-ledger-api/</div>
+          <div class="state">Nine sessions, project memory and settings. Present on disk, unreachable from the new directory.</div>
+        </div>
+        <div class="drawer live">
+          <div class="label">Current location</div>
+          <div class="path">/home/dev/src/acme/ledger-api</div>
+          <div class="rule">same rule, different path</div>
+          <div class="slug">~/.claude/projects/-home-dev-src-acme-ledger-api/</div>
+          <div class="state">What <code>/resume</code> lists: only sessions started after the move.</div>
+        </div>
+      </div>
+      <p>The same mechanism separates one project across machines and spellings. A copied <code>~/.claude</code> from a Windows workstation holds <code>D:\src\ledger-api</code>, <code>D:/src/ledger-api</code> and <code>d:/src/ledger-api</code> as three config entries for one directory, each produced by a different way of launching Claude Code.</p>
+    </section>
+
+    <section id="scope">
+      <div class="sechead">
+        <div class="eyebrow">Scope</div>
+        <h2>What a project store contains</h2>
+      </div>
+      <p>Verified against Claude Code 2.1.x by reading the binary and real stores. Everything keyed by session id is left alone. Everything keyed by path is moved and rewritten.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Item</th><th>Carries paths</th><th>Handling</th></tr></thead>
+          <tbody>
+            <tr><td><code>&lt;sessionId&gt;.jsonl</code> transcripts</td><td class="yes">yes</td><td><code>cwd</code> on every record, tool inputs (<code>file_path</code>, <code>command</code>), <code>toolUseResult.filePath</code>, file-history snapshot keys. Moved and rewritten line by line. Untouched lines stay byte-identical; mtimes are preserved so the resume picker's order is unchanged.</td></tr>
+            <tr><td><code>&lt;sessionId&gt;/subagents/agent-*.jsonl</code></td><td class="yes">yes</td><td>Moved and rewritten.</td></tr>
+            <tr><td><code>&lt;sessionId&gt;/tool-results/</code>, <code>workflows/</code></td><td class="no">opaque output</td><td>Moved as-is.</td></tr>
+            <tr><td><code>memory/MEMORY.md</code>, <code>memory/*.md</code></td><td class="yes">often</td><td>Moved and rewritten. On merge the target's index is kept; the previous index is saved as <code>MEMORY.imported-from-&lt;slug&gt;.md</code> and linked from it, so the size-capped index never grows past its limit.</td></tr>
+            <tr><td><code>sessions-index.json</code></td><td class="yes">yes</td><td><code>fullPath</code> and <code>projectPath</code> rewritten; entries merged into the target's index.</td></tr>
+            <tr><td><code>~/.claude.json → projects[&lt;cwd&gt;]</code></td><td class="yes">the key</td><td>All spellings of the previous path merged into <code>projects[&lt;new cwd&gt;]</code>: allow-lists unioned, MCP servers merged with the target winning on conflict, trust OR'd, counters maxed.</td></tr>
+            <tr><td><code>~/.claude/history.jsonl</code></td><td class="yes">yes</td><td><code>project</code> re-pointed. On import, source entries are appended and deduplicated.</td></tr>
+            <tr><td><code>file-history/</code>, <code>todos/</code>, <code>session-env/</code></td><td class="no">session id only</td><td>Untouched.</td></tr>
+            <tr><td><code>&lt;project&gt;/.claude/settings.local.json</code>, <code>.mcp.json</code></td><td class="yes">sometimes</td><td>Moved with the directory but may still read <code>Read(/old/path/**)</code>. Reported; rewritten with <code>--rewrite-project-files</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="commands">
+      <div class="sechead">
+        <div class="eyebrow">Commands</div>
+        <h2>Operating sequence</h2>
+      </div>
+      <p>Nothing is modified without <code>--apply</code>. Every apply writes a full backup first and prints the undo command.</p>
+      <div class="steps">
+
+        <div class="step">
+          <div class="head"><span class="ord">01</span><h3>Scan — what is orphaned, and where it went</h3></div>
+          <p>Read-only. Lists every store whose recorded directory no longer exists, its sessions, and ranked candidates for the new location found under the search roots.</p>
+          <div class="cmd"><button class="copy" type="button">Copy</button>claude-relink <span class="k">scan</span> --search-root ~/src</div>
+          <div class="out"><span class="dim">Claude Code store : /home/dev/.claude
+Project stores    : 23  (18 connected, 5 orphaned, 0 undeterminable)
+Candidate dirs    : 61 under /home/dev/src (depth 2)</span>
+
+ORPHANED  /home/dev/src/personal/ledger-api
+  store    : /home/dev/.claude/projects/-home-dev-src-personal-ledger-api
+  sessions : 9  (31.4MB, last activity 2026-09-02 14:11)   extras: memory, sessions-index.json
+  repos    : acme/ledger-api (27)
+    - 4e12ae05  2026-09-02 14:11    12.2MB  Migrate settlement batch to event sourcing
+    - e645dc69  2026-08-30 09:40     4.1MB  Idempotency keys for the payouts endpoint
+  candidates:
+<span class="hi">    [HIGH 0.96] /home/dev/src/acme/ledger-api</span>
+               - same directory name
+               - 212/240 files referenced in transcripts exist here (88%)
+               - git remote matches transcripts (acme/ledger-api)
+               - already a Claude project (merge target)
+  relink   : claude-relink relink --from /home/dev/src/personal/ledger-api --to /home/dev/src/acme/ledger-api --apply</div>
+          <p>Without <code>--search-root</code> the candidate pool is the projects Claude already knows about, which is sufficient once Claude has been opened in the new location. <code>--all</code> also lists healthy stores; <code>--json</code> gives machine-readable output.</p>
+        </div>
+
+        <div class="step">
+          <div class="head"><span class="ord">02</span><h3>Relink — dry run, then apply</h3></div>
+          <p>Prints the full plan and changes nothing. <code>--from</code> accepts the previous path in any spelling, the slug, or a unique substring. Mode is chosen automatically: <strong>move</strong> when no store exists for the new path yet; <strong>merge</strong> when sessions have already been started there.</p>
+          <div class="cmd"><button class="copy" type="button">Copy</button>claude-relink <span class="k">relink</span> --from personal/ledger-api --to ~/src/acme/ledger-api
+claude-relink <span class="k">relink</span> --from personal/ledger-api --to ~/src/acme/ledger-api <span class="a">--apply</span></div>
+          <div class="out"><span class="dim">Relink plan  [MERGE]
+  from : /home/dev/src/personal/ledger-api
+  to   : /home/dev/src/acme/ledger-api
+  sessions: 9 to merge, 0 duplicates skipped, 0 conflicts
+  path rewrite: all</span>
+
+  [ merge-session] 4e12ae05-8b80-4e3b-8237-5b8a5c7e8855  (12.2MB, 2026-09-02 14:11)  Migrate settlement batch…
+  [       sidecar] 4e12ae05-8b80-4e3b-8237-5b8a5c7e8855/ (subagents, tool-results …)
+  [        memory] memory/MEMORY.md differs: previous index saved as MEMORY.imported-from-….md and linked
+  [         index] sessions-index.json entries rewritten and merged into target index
+  [        config] .claude.json: merge ['…/personal/ledger-api'] -> projects['…/acme/ledger-api']
+  [       history] history.jsonl: 143 prompt entries re-pointed
+  [    remove-dir] remove emptied source store
+
+<span class="dim">Applied: 9 sessions, 6,208 transcript lines rewritten, 41 sidecar files, 7 memory files, 143 history entries.
+Backup: /home/dev/.claude/backups/claude-relink/20261031-104210-…
+Undo  : claude-relink undo --backup 20261031-104210-… --apply</span></div>
+          <p>Then <code>cd</code> into the new directory and <code>claude --resume</code>. The previous conversations are listed with the new ones, and a resumed session sees the new absolute paths throughout rather than attempting to read files at the old location.</p>
+        </div>
+
+        <div class="step">
+          <div class="head"><span class="ord">03</span><h3>Batch — every orphan with one unambiguous match</h3></div>
+          <p>Relinks each orphan that has exactly one candidate at or above the threshold and no runner-up within 0.1 of it. Everything else is skipped with a reason, for an explicit <code>--from</code> / <code>--to</code>.</p>
+          <div class="cmd"><button class="copy" type="button">Copy</button>claude-relink <span class="k">relink --auto</span> --search-root ~/src --min-confidence 0.8          <span class="c"># dry run</span>
+claude-relink <span class="k">relink --auto</span> --search-root ~/src --min-confidence 0.8 <span class="a">--apply</span></div>
+        </div>
+
+        <div class="step">
+          <div class="head"><span class="ord">04</span><h3>Import — from a copied <code>~/.claude</code> on another machine</h3></div>
+          <p>The source is never modified. Windows roots match case-insensitively with either separator, and sub-path separators are converted: <code>D:\src\ledger-api\api\routes.ts</code> becomes <code>…/ledger-api/api/routes.ts</code>. The matching <code>.claude.json</code> is found beside the copied directory or given with <code>--src-config</code>. Its project entry, in all spellings, is merged into the live config, and its history entries for that project are appended and deduplicated.</p>
+          <div class="cmd"><button class="copy" type="button">Copy</button>claude-relink <span class="k">relink</span> \
+  --src-claude-dir /mnt/backup/laptop/.claude \
+  --from 'D:/src/ledger-api' \
+  --to   ~/src/acme/ledger-api</div>
+          <p>For an inventory of a copied store: <code>scan --claude-dir /mnt/backup/laptop/.claude --config /mnt/backup/laptop/.claude.json --search-root ~/src</code>.</p>
+        </div>
+
+        <div class="step">
+          <div class="head"><span class="ord">05</span><h3>Undo</h3></div>
+          <p>Each apply writes <code>~/.claude/backups/claude-relink/&lt;timestamp&gt;-&lt;slug&gt;/</code>: a tarball of every store directory it changed, copies of <code>.claude.json</code> and <code>history.jsonl</code>, and a manifest. Undo restores exactly that prior state.</p>
+          <div class="cmd"><button class="copy" type="button">Copy</button>claude-relink <span class="k">undo</span>                                    <span class="c"># list backups</span>
+claude-relink <span class="k">undo</span> --backup 20261031-104210-… <span class="a">--apply</span></div>
+        </div>
+
+        <div class="step">
+          <div class="head"><span class="ord">06</span><h3>Dedupe — config spellings</h3></div>
+          <p>Claude Code creates separate <code>.claude.json</code> entries for <code>D:\src\x</code>, <code>D:/src/x</code> and <code>d:/src/x</code> depending on how it was launched. This merges them; the entry whose directory exists is kept as the canonical key.</p>
+          <div class="cmd"><button class="copy" type="button">Copy</button>claude-relink <span class="k">dedupe</span>          <span class="c"># dry run; --apply to merge</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="scoring">
+      <div class="sechead">
+        <div class="eyebrow">Matching</div>
+        <h2>How a candidate earns its score</h2>
+      </div>
+      <p>Three independent signals, capped at 1.0. A name match alone never qualifies for <code>--auto</code>; the fingerprint is what separates a project from a fork or a backup copy of it.</p>
+      <div class="signals">
+        <div class="sig"><span>Directory name matches</span><div class="bar"><i style="width:45%"></i></div><span class="w">0.45</span></div>
+        <div class="sig"><span>Deeper trailing components also match</span><div class="bar"><i style="width:15%"></i></div><span class="w">up to 0.15</span></div>
+        <div class="sig"><span>Files the transcripts touched exist under the candidate</span><div class="bar"><i style="width:50%"></i></div><span class="w">0.5 × coverage</span></div>
+        <div class="sig"><span>Git remote matches <code>pr-link</code> records or GitHub URLs</span><div class="bar"><i style="width:30%"></i></div><span class="w">0.3 owner/repo · 0.15 name only</span></div>
+      </div>
+      <div class="pills">
+        <span class="pill ok"><i></i>HIGH ≥ 0.80 — eligible for --auto</span>
+        <span class="pill warn"><i></i>MED ≥ 0.50 — suggested command printed</span>
+        <span class="pill info"><i></i>LOW — shown for reference</span>
+      </div>
+      <p>The fingerprint is built from up to 400 distinct file paths found in <code>Read</code>, <code>Edit</code>, <code>Write</code> and <code>Grep</code> inputs and tool results across the orphan's transcripts and subagents, relative to the previous root. A move between GitHub organizations scores "name only" on the remote until the clone's origin is updated.</p>
+    </section>
+
+    <section id="options">
+      <div class="sechead">
+        <div class="eyebrow">Reference</div>
+        <h2>Options</h2>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Flag</th><th>Applies to</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td><code>--claude-dir DIR</code> / <code>--config FILE</code></td><td>all</td><td>Override the store location. Defaults follow Claude Code: <code>$CLAUDE_CONFIG_DIR</code> or <code>~/.claude</code>, with <code>.claude.json</code> inside the config dir or in the home directory. Accepted before or after the subcommand.</td></tr>
+            <tr><td><code>--search-root DIR</code> (repeatable), <code>--depth N</code></td><td>scan, relink --auto</td><td>Where to look for moved projects; default depth 2. Hidden directories, <code>node_modules</code>, build output and similar are skipped.</td></tr>
+            <tr><td><code>--top N</code>, <code>--sessions N</code>, <code>--all</code>, <code>--json</code></td><td>scan</td><td>Candidates and sessions shown per orphan; include healthy stores; machine-readable output.</td></tr>
+            <tr><td><code>--from OLD</code> / <code>--to NEWDIR</code></td><td>relink</td><td>Previous path (any spelling), slug or unique substring; the directory the project lives in now. <code>--to</code> is resolved as Claude Code resolves it, with symlinks followed.</td></tr>
+            <tr><td><code>--paths all | cwd-only</code></td><td>relink</td><td>Default rewrites every old-path reference. <code>cwd-only</code> keeps tool inputs and results as a strict historical record; resume works, but Claude sees stale paths in its context.</td></tr>
+            <tr><td><code>--rewrite-project-files</code></td><td>relink</td><td>Also fix old absolute paths in <code>.claude/settings.local.json</code>, <code>.claude/settings.json</code> and <code>.mcp.json</code> under the new directory. Copies are kept in the backup.</td></tr>
+            <tr><td><code>--src-claude-dir DIR</code>, <code>--src-config FILE</code></td><td>relink</td><td>Import from another store; the source is read-only.</td></tr>
+            <tr><td><code>--keep-source</code></td><td>relink</td><td>Leave the previous store directory in place. Implied when importing.</td></tr>
+            <tr><td><code>--auto</code>, <code>--min-confidence X</code></td><td>relink</td><td>Batch mode and its threshold (default 0.8).</td></tr>
+            <tr><td><code>--apply</code></td><td>relink, undo, dedupe</td><td>Required for every write.</td></tr>
+            <tr><td><code>--force</code></td><td>relink, undo, dedupe</td><td>Proceed even if Claude Code sessions appear to be running.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="guards">
+      <div class="sechead">
+        <div class="eyebrow">Safety</div>
+        <h2>Guard rails and limits</h2>
+      </div>
+      <div class="callout"><span class="label">Before every apply</span>Exit all Claude Code sessions. Claude Code rewrites <code>.claude.json</code> on exit and would clobber the merge. The tool refuses to run while a live process is registered in <code>~/.claude/sessions/</code>; <code>--force</code> overrides.</div>
+      <div class="grid2">
+        <div class="card">
+          <h3>What it guarantees</h3>
+          <ul class="tight">
+            <li>Dry run unless <code>--apply</code>; a backup and an undo command on every apply.</li>
+            <li>Boundary-aware rewriting: <code>/src/proj</code> never matches <code>/src/proj2</code> or <code>/src/proj.bak</code>, but does match <code>/src/proj/…</code>, a sentence-ending <code>/src/proj.</code> and <code>Read(/src/proj/**)</code>.</li>
+            <li>Lines that do not mention the previous path are copied byte-for-byte; a truncated final line from a crash is copied untouched.</li>
+            <li>Transcript mtimes preserved; identical duplicate sessions skipped; a conflicting session id keeps the target's copy and leaves the source copy in the backup.</li>
+            <li>Validated on a 2.7 MB Windows-origin transcript: zero leftovers, zero unparsable lines, and undo restored a byte-identical file.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>What it does not do</h3>
+          <ul class="tight">
+            <li>Slugs longer than 200 characters receive a hash suffix in Claude Code that cannot be reproduced; those paths are refused rather than guessed.</li>
+            <li>Worktree sessions (<code>&lt;project&gt;/.claude/worktrees/&lt;name&gt;</code>) appear as their own orphans; relink them explicitly to the new worktree path.</li>
+            <li><code>tool-results/</code> files are copied verbatim. They are saved output, not parsed on resume.</li>
+            <li>Linux and macOS hosts. Reading Windows-origin stores is supported; running on Windows is untested.</li>
+            <li>Claude Code's on-disk format is undocumented and may change. <code>scan</code> is read-only and is the safe first check against a newer version.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span class="wordmark">VibeForge <span>Systems</span></span>
+    <span>claude-relink 1.0.0 · Apache-2.0 · Copyright 2026 VibeForge Systems LLC</span>
+    <span>Not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC.</span>
+    <a href="https://github.com/VibeForge-Systems/claude-relink">github.com/VibeForge-Systems/claude-relink</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  document.querySelectorAll('.cmd').forEach(function (block) {
+    var btn = block.querySelector('button.copy');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var clone = block.cloneNode(true);
+      var b = clone.querySelector('button.copy'); if (b) b.remove();
+      var text = clone.textContent.replace(/^\n+|\n+$/g, '');
+      function done() { btn.textContent = 'Copied'; btn.dataset.done = '1'; setTimeout(function () { btn.textContent = 'Copy'; delete btn.dataset.done; }, 1600); }
+      function fallback() {
+        try {
+          var range = document.createRange(); range.selectNodeContents(block);
+          var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+          btn.textContent = 'Selected';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 2000);
+        } catch (e) {}
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+      } else { fallback(); }
+    });
+  });
+  var links = Array.prototype.slice.call(document.querySelectorAll('.links a'));
+  var sections = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
+  function update() {
+    var y = window.scrollY + 140, current = 0;
+    sections.forEach(function (s, i) { if (s && s.offsetTop <= y) current = i; });
+    links.forEach(function (a, i) { if (i === current) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); });
+  }
+  window.addEventListener('scroll', update, { passive: true });
+  update();
+})();
+</script>
+</body>
+</html>
